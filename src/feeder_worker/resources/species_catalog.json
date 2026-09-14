@@ -1,0 +1,34 @@
+{
+  "species": [
+    {
+      "modelLabel": "Avoante",
+      "classIndex": 0,
+      "scientificName": "Zenaida auriculata",
+      "commonName": "Avoante",
+      "s3DestinationPrefix": "Avoante/",
+      "description": "A avoante, também conhecida como pomba-de-bando, é uma ave típica de ambientes abertos, como campos, áreas rurais e regiões de cerrado. A expansão das áreas desmatadas e agrícolas favoreceu o aumento de sua distribuição. Alimenta-se principalmente de sementes e grãos, frequentando plantações e áreas de pastagem. É uma espécie bastante sociável, podendo formar grandes bandos com centenas de indivíduos.",
+      "tips": "Ofereça milho quebrado e painço em um comedouro baixo, amplo e instalado em local aberto.",
+      "imageUrl": "https://comedouro-aves-fotos-tcc-2026.s3.us-east-1.amazonaws.com/app/AVO.JPG"
+    },
+    {
+      "modelLabel": "Bem-Te-Vi",
+      "classIndex": 1,
+      "scientificName": "Pitangus sulphuratus",
+      "commonName": "Bem-Te-Vi",
+      "s3DestinationPrefix": "Bem-te-vi/",
+      "description": "O bem-te-vi é uma das aves mais comuns do Brasil, vivendo tanto nas bordas de matas quanto em áreas urbanas. Famoso por seu canto característico, possui uma crista de penas amarelas no alto da cabeça, geralmente mantida escondida.",
+      "tips": "Ofereça frutas picadas em um comedouro de plataforma, instalado em local aberto e seguro.",
+      "imageUrl": "https://comedouro-aves-fotos-tcc-2026.s3.us-east-1.amazonaws.com/app/BTV.JPG"
+    },
+    {
+      "modelLabel": "Sabia-Laranjeira",
+      "classIndex": 2,
+      "scientificName": "Turdus rufiventris",
+      "commonName": "Sabiá-Laranjeira",
+      "s3DestinationPrefix": "Sabia-Laranjeira/",
+      "description": "O sabiá-laranjeira possui o ventre alaranjado característico. Vive tanto em florestas quanto em áreas urbanas e, durante o período reprodutivo, pode cantar até mesmo de madrugada.",
+      "tips": "Ofereça frutas picadas, como banana e mamão, em um comedouro de plataforma.",
+      "imageUrl": "https://comedouro-aves-fotos-tcc-2026.s3.us-east-1.amazonaws.com/app/SL.JPG"
+    }
+  ]
+}

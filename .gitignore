@@ -1,0 +1,45 @@
+# Ambiente e segredos — nunca versionar
+.env
+*.env
+!.env.example
+
+# Modelo treinado — mantido localmente fora do Git (ver MODEL_PATH)
+*.keras
+*.h5
+models/
+
+# Estado local do worker (SQLite)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Logs do worker (Agendador de Tarefas / execução local)
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Ambientes virtuais
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Lixo de sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Cobertura de testes (se adicionada no futuro)
+.coverage
+htmlcov/
