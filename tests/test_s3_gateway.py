@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 from botocore.exceptions import ClientError
 
-from feeder_worker.s3_gateway import ERRORS_PREFIX, S3Gateway
+from feeder_worker.s3_gateway import BACKGROUND_PREFIX, ERRORS_PREFIX, S3Gateway
 
 
 class _FakePaginator:
@@ -157,6 +157,17 @@ def test_move_to_errors_uses_errors_prefix():
     destination = gateway.move_to_errors("foto_1.jpg")
 
     assert destination == f"{ERRORS_PREFIX}foto_1.jpg"
+
+
+def test_move_to_background_uses_background_prefix():
+    client = _FakeS3Client([])
+    gateway = S3Gateway.with_client(client, bucket="bucket", excluded_prefixes=set())
+
+    destination = gateway.move_to_background("foto_1.jpg")
+
+    assert destination == f"{BACKGROUND_PREFIX}foto_1.jpg"
+    assert client.copy_calls == [("foto_1.jpg", f"{BACKGROUND_PREFIX}foto_1.jpg")]
+    assert client.delete_calls == ["foto_1.jpg"]
 
 
 def test_delete_calls_delete_object_directly():

@@ -45,6 +45,7 @@ class FakeS3Gateway:
         self.moved: list[tuple[str, str]] = []
         self.deleted: list[str] = []
         self.moved_to_errors: list[str] = []
+        self.moved_to_background: list[str] = []
 
     def list_root_images(self):
         return list(self._objects)
@@ -59,6 +60,10 @@ class FakeS3Gateway:
     def move_to_errors(self, key):
         self.moved_to_errors.append(key)
         return f"erros/{key}"
+
+    def move_to_background(self, key):
+        self.moved_to_background.append(key)
+        return f"background/{key}"
 
     def delete(self, key):
         self.deleted.append(key)
@@ -159,7 +164,7 @@ def test_recognized_species_creates_sighting_and_moves_photo(state_store):
 
 # ---- confiança abaixo do limiar ----
 
-def test_low_confidence_deletes_photo_without_creating_sighting(state_store):
+def test_low_confidence_moves_to_background_without_creating_sighting(state_store):
     obj = _s3_object()
     classifier = FakeClassifier(result=ClassificationResult(0, 0.5, [0.5, 0.3, 0.2]))
     api_client = FakeApiClient()
@@ -169,7 +174,8 @@ def test_low_confidence_deletes_photo_without_creating_sighting(state_store):
     process_photo(deps, obj)
 
     assert api_client.calls == []
-    assert s3_gateway.deleted == [obj.key]
+    assert s3_gateway.moved_to_background == [obj.key]
+    assert s3_gateway.deleted == []
     assert s3_gateway.moved == []
 
     saved = state_store.get(obj.key, obj.etag)

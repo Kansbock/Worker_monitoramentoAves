@@ -2,8 +2,8 @@
 
 Regras de escopo (definidas no plano):
   * Entrada: somente objetos diretamente na raiz do bucket (chave sem "/").
-  * "app/", "Upload/", "Fotos salvas/" e qualquer prefixo de destino por
-    espécie nunca são tratados como entrada.
+  * "app/", "Upload/", "Fotos salvas/", "erros/", "background/" e qualquer
+    prefixo de destino por espécie nunca são tratados como entrada.
   * Mover = copiar para o destino e só então excluir a origem, nessa ordem,
     para nunca perder uma imagem por falha a meio caminho.
 """
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 ERRORS_PREFIX = "erros/"
+BACKGROUND_PREFIX = "background/"
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,13 @@ class S3Gateway:
         self._bucket = bucket
         # Prefixos nunca tratados como entrada: pastas de destino por espécie
         # somadas às pastas fixas do acervo/app.
-        self._excluded_prefixes = excluded_prefixes | {"app/", "Upload/", "Fotos salvas/", ERRORS_PREFIX}
+        self._excluded_prefixes = excluded_prefixes | {
+            "app/",
+            "Upload/",
+            "Fotos salvas/",
+            ERRORS_PREFIX,
+            BACKGROUND_PREFIX,
+        }
 
     @classmethod
     def with_client(cls, client, bucket: str, excluded_prefixes: set[str]) -> "S3Gateway":
@@ -52,7 +59,13 @@ class S3Gateway:
         instance = cls.__new__(cls)
         instance._client = client
         instance._bucket = bucket
-        instance._excluded_prefixes = excluded_prefixes | {"app/", "Upload/", "Fotos salvas/", ERRORS_PREFIX}
+        instance._excluded_prefixes = excluded_prefixes | {
+            "app/",
+            "Upload/",
+            "Fotos salvas/",
+            ERRORS_PREFIX,
+            BACKGROUND_PREFIX,
+        }
         return instance
 
     @property
@@ -107,6 +120,14 @@ class S3Gateway:
 
     def move_to_errors(self, key: str) -> str:
         destination_key = f"{ERRORS_PREFIX}{PurePosixPath(key).name}"
+        self.move(key, destination_key)
+        return destination_key
+
+    def move_to_background(self, key: str) -> str:
+        """Move para a pasta 'background/' na raiz do bucket (usada quando
+        nenhuma espécie é reconhecida com confiança suficiente), em vez de
+        excluir a imagem."""
+        destination_key = f"{BACKGROUND_PREFIX}{PurePosixPath(key).name}"
         self.move(key, destination_key)
         return destination_key
 

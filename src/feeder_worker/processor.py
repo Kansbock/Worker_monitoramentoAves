@@ -127,14 +127,14 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
 
     if result.confidence < deps.confidence_threshold:
         logger.info(
-            "Confiança %.4f abaixo do limiar %.2f em %s (mais provável: %s); removendo da raiz",
+            "Confiança %.4f abaixo do limiar %.2f em %s (mais provável: %s); movendo para background/",
             result.confidence,
             deps.confidence_threshold,
             obj.key,
             species_entry.model_label,
         )
         if not deps.dry_run:
-            deps.s3_gateway.delete(obj.key)
+            deps.s3_gateway.move_to_background(obj.key)
         state.phase = PHASE_REJECTED
         if not deps.dry_run:
             deps.state_store.save(state)
