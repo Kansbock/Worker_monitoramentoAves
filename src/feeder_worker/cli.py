@@ -47,7 +47,11 @@ def _build_processor_dependencies(settings: Settings, dry_run: bool) -> Processo
         password=settings.api_user_password,
     )
     species_ids = resolve_species_ids(catalog, api_client)
-    classifier = BirdClassifier(model_path=settings.model_path, num_classes=catalog.num_classes)
+    classifier = BirdClassifier(
+        model_path=settings.model_path,
+        num_classes=catalog.num_classes,
+        species_class_names=[entry.model_label for entry in catalog.entries],
+    )
     state_store = StateStore(settings.state_db_path)
 
     return ProcessorDependencies(

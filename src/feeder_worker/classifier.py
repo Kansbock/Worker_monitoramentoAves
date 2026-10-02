@@ -11,6 +11,7 @@ pré-processamento e degradaria a predição.
 from __future__ import annotations
 
 import io
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,7 @@ from PIL import Image, UnidentifiedImageError
 logger = logging.getLogger(__name__)
 
 INPUT_SIZE = (299, 299)  # (largura, altura), conforme IMG_SIZE no notebook de treinamento
+OTHER_CLASS_LABEL = "Outros"
 
 
 class InvalidImageError(Exception):
@@ -38,18 +40,22 @@ class ClassificationResult:
 class BirdClassifier:
     """Encapsula o modelo Keras carregado uma única vez por processo."""
 
-    def __init__(self, model_path: Path, num_classes: int):
+    def __init__(
+        self, model_path: Path, num_classes: int, species_class_names: list[str] | None = None
+    ):
         self._model_path = model_path
         self._num_classes = num_classes
+        self._species_class_names = species_class_names
         self._model = self._load_model(model_path)
         self._validate_output_shape()
+        self._validate_class_names()
 
     @classmethod
     def from_loaded_model(cls, model, num_classes: int) -> "BirdClassifier":
         """Constrói o classificador a partir de um modelo já carregado (ou de
         um stub/fake), sem tocar o disco nem importar TensorFlow. Usado nos
         testes para isolar a lógica de decodificação/pré-processamento do
-        carregamento real do modelo."""
+        carregamento real do modelo nem da verificação do arquivo de rótulos."""
         instance = cls.__new__(cls)
         instance._model_path = None
         instance._num_classes = num_classes
@@ -72,10 +78,38 @@ class BirdClassifier:
     def _validate_output_shape(self) -> None:
         output_shape = self._model.output_shape
         num_outputs = output_shape[-1]
-        if num_outputs != self._num_classes:
+        if num_outputs not in (self._num_classes, self._num_classes + 1):
             raise ValueError(
                 f"O modelo produz {num_outputs} classes, mas o catálogo define "
-                f"{self._num_classes}. Verifique MODEL_PATH e o catálogo de espécies."
+                f"{self._num_classes} espécies: são esperadas {self._num_classes} saídas "
+                f"ou {self._num_classes + 1} com {OTHER_CLASS_LABEL}. Verifique MODEL_PATH."
+            )
+        self._num_model_outputs = num_outputs
+
+    def _validate_class_names(self) -> None:
+        labels_path = self._model_path.with_name("class_names.json")
+        if not labels_path.is_file():
+            if self._num_model_outputs == self._num_classes + 1:
+                raise FileNotFoundError(
+                    f"Modelo de {self._num_model_outputs} classes exige {labels_path} "
+                    "exportado junto do modelo para confirmar a ordem dos rótulos."
+                )
+            return
+
+        if self._species_class_names is None:
+            raise ValueError("Informe os rótulos do catálogo para validar class_names.json.")
+        try:
+            labels = json.loads(labels_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Arquivo de rótulos inválido: {labels_path}") from exc
+
+        expected = self._species_class_names + (
+            [OTHER_CLASS_LABEL] if self._num_model_outputs == self._num_classes + 1 else []
+        )
+        if labels != expected:
+            raise ValueError(
+                f"Rótulos em {labels_path} não correspondem ao catálogo e ao modelo: "
+                f"esperado {expected!r}, encontrado {labels!r}."
             )
 
     def classify(self, image_bytes: bytes) -> ClassificationResult:

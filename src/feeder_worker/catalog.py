@@ -1,8 +1,8 @@
 """Carregamento e validação do catálogo de espécies versionado.
 
-O catálogo mapeia o rótulo/índice de saída do modelo para o nome científico
-usado como chave de integração com a API Aves, além do prefixo S3 de destino
-e do conteúdo curatorial usado no seed inicial do catálogo da API.
+O catálogo mapeia apenas os índices das espécies reconhecidas para o nome
+científico usado como chave de integração com a API Aves, além do prefixo S3
+e do conteúdo curatorial do seed. A classe Outros não é uma espécie.
 """
 
 from __future__ import annotations

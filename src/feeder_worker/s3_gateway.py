@@ -124,9 +124,7 @@ class S3Gateway:
         return destination_key
 
     def move_to_background(self, key: str) -> str:
-        """Move para a pasta 'background/' na raiz do bucket (usada quando
-        nenhuma espécie é reconhecida com confiança suficiente), em vez de
-        excluir a imagem."""
+        """Move para 'background/' uma predição Outros ou espécie abaixo do limiar."""
         destination_key = f"{BACKGROUND_PREFIX}{PurePosixPath(key).name}"
         self.move(key, destination_key)
         return destination_key

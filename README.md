@@ -4,9 +4,10 @@ Worker Python (Poetry) que roda continuamente e:
 
 1. lista somente as fotos na **raiz** do bucket S3 `comedouro-aves-fotos-tcc-2026`;
 2. classifica cada foto com um modelo Keras/InceptionV3 treinado localmente (`model.keras`);
-3. quando a confiança atinge `CONFIDENCE_THRESHOLD` (padrão `0.85`), cria um avistamento
-   autenticado na API Aves e move a foto para a pasta da espécie reconhecida;
-4. quando a foto é válida mas nenhuma espécie é reconhecida, remove a foto da raiz;
+3. quando prevê uma das três espécies com confiança acima de `CONFIDENCE_THRESHOLD` (padrão
+   `0.85`), cria um avistamento autenticado na API Aves e move a foto para a pasta da espécie;
+4. quando prevê `Outros` (independentemente da confiança), ou prevê uma espécie abaixo do
+   limiar, move a foto para `background/` sem criar avistamento;
 5. quando o arquivo não pode ser decodificado como imagem, move para `erros/` (nunca apaga).
 
 O worker é seguro para reiniciar a qualquer momento: o estado de cada foto (chave S3 + ETag)
@@ -19,9 +20,19 @@ duplica um avistamento.
 - Windows 11 (ou qualquer SO com Python nativo), **Python 3.12** (`>=3.12,<3.13`).
 - [Poetry](https://python-poetry.org/) instalado (`pipx install poetry` ou instalador oficial).
 - [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) para configurar o AWS SSO.
-- Um arquivo `model.keras` treinado (InceptionV3, entrada RGB 299×299, `preprocess_input`
-  incorporado no grafo do modelo, saída softmax de 3 classes na ordem
-  `Avoante`, `Bem-Te-Vi`, `Sabia-Laranjeira`). **Não é versionado neste repositório.**
+- Um modelo `.keras` treinado (InceptionV3, entrada RGB 299×299, `preprocess_input`
+  incorporado no grafo, pixels de entrada em 0–255). O modelo novo possui **quatro**
+  saídas softmax na ordem `Avoante`, `Bem-Te-Vi`, `Sabia-Laranjeira`, `Outros`;
+  mantenha o `class_names.json` exportado pelo notebook no **mesmo diretório** do modelo
+  para que o worker valide a ordem antes de iniciar. Modelos antigos de três saídas
+  continuam aceitos sem esse arquivo. Os arquivos do modelo **não são versionados**.
+
+Exemplo: copie `inceptionv3_classificador_passaros.keras` e `class_names.json` para
+`models/`, e configure `MODEL_PATH=./models/inceptionv3_classificador_passaros.keras`.
+O catálogo da API continua com **três espécies**: não cadastre `Outros` como espécie.
+O `threshold_report.json` do notebook é exploratório; o worker **não** lê nem aplica
+automaticamente um limiar dele. Revise os erros e a cobertura antes de ajustar
+`CONFIDENCE_THRESHOLD` e ativar o processamento real.
 
 ## Instalação
 
@@ -67,11 +78,11 @@ Principais variáveis (veja `.env.example` para a lista completa e os valores re
 | `S3_BUCKET` | Nome do bucket do comedouro. |
 | `API_BASE_URL` | URL base da API Aves implantada. |
 | `API_USER_NAME` / `API_USER_EMAIL` / `API_USER_PASSWORD` | Credenciais da conta de serviço dedicada ao worker. |
-| `MODEL_PATH` | Caminho absoluto local para `model.keras`. |
+| `MODEL_PATH` | Caminho local do modelo `.keras` (para 4 saídas, `class_names.json` deve estar na mesma pasta). |
 | `STATE_DB_PATH` | Caminho do arquivo SQLite de estado (criado automaticamente). |
 | `POLL_INTERVAL_SECONDS` | Intervalo entre ciclos de verificação (padrão `60`). |
 | `MAX_IMAGES_PER_CYCLE` | Máximo de fotos processadas por ciclo (padrão `10`). |
-| `CONFIDENCE_THRESHOLD` | Confiança mínima para reconhecer uma espécie (padrão `0.85`). |
+| `CONFIDENCE_THRESHOLD` | Confiança mínima para reconhecer uma das três espécies (padrão `0.85`); `Outros` sempre é rejeitado. |
 | `CAPTURE_TIMEZONE` | Fuso horário de interpretação dos timestamps (padrão `America/Sao_Paulo`). |
 
 ## Primeira execução (bootstrap)
@@ -86,7 +97,8 @@ poetry run feeder-worker seed-species
 - `bootstrap-service-user` cria a conta de serviço na API (ou confirma que já existe) e valida
   o login, sem persistir a senha ou o token.
 - `seed-species` garante que as três espécies do catálogo (`Avoante`, `Bem-Te-Vi`,
-  `Sabia-Laranjeira`) existam na API, sem sobrescrever conteúdo já curado.
+  `Sabia-Laranjeira`) existam na API, sem sobrescrever conteúdo já curado. `Outros`
+  não é uma espécie e nunca é cadastrado nem exibido como avistamento no app.
 
 ## Ensaio (dry-run)
 
@@ -96,7 +108,10 @@ Antes de rodar de verdade, valide a classificação sem criar avistamentos, move
 poetry run feeder-worker run --dry-run --once
 ```
 
-Revise a saída (rótulo/confiança previstos e a ação planejada para cada foto) antes de prosseguir.
+Revise a saída (rótulo/confiança previstos e a ação planejada para cada foto) antes de prosseguir,
+especialmente as fotos classificadas como `Outros`. O novo modelo de quatro classes não garante
+uma taxa de falsos positivos: o conjunto de validação do notebook tem poucos exemplos de
+`Outros`, e `CONFIDENCE_THRESHOLD=0.85` é apenas um valor inicial.
 
 ## Execução contínua
 

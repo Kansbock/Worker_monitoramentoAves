@@ -1,5 +1,5 @@
 """Orquestra o processamento de cada foto: classificar, registrar o
-avistamento, mover ou excluir, e permitir retomada segura em caso de falha.
+avistamento ou rejeitar, mover e permitir retomada segura em caso de falha.
 
 Cada foto é tratada isoladamente: uma falha em uma imagem nunca interrompe o
 processamento das demais no mesmo ciclo. O estado local garante que, ao
@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from .api_client import AvesApiClient
 from .catalog import SpeciesCatalog
-from .classifier import BirdClassifier, InvalidImageError
+from .classifier import OTHER_CLASS_LABEL, BirdClassifier, InvalidImageError
 from .s3_gateway import S3Gateway, S3Object
 from .state import (
     PHASE_COMPLETED,
@@ -121,6 +121,18 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
             deps.state_store.save(state)
         return
 
+    if result.class_index == deps.catalog.num_classes:
+        state.model_label = OTHER_CLASS_LABEL
+        state.confidence = result.confidence
+        logger.info(
+            "Predição %s (confiança %.4f) em %s; movendo para background/ sem criar avistamento",
+            OTHER_CLASS_LABEL,
+            result.confidence,
+            obj.key,
+        )
+        _reject_photo(deps, obj, state)
+        return
+
     species_entry = deps.catalog.by_class_index(result.class_index)
     state.model_label = species_entry.model_label
     state.confidence = result.confidence
@@ -133,11 +145,7 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
             obj.key,
             species_entry.model_label,
         )
-        if not deps.dry_run:
-            deps.s3_gateway.move_to_background(obj.key)
-        state.phase = PHASE_REJECTED
-        if not deps.dry_run:
-            deps.state_store.save(state)
+        _reject_photo(deps, obj, state)
         return
 
     species_id = deps.species_ids_by_scientific_name[species_entry.scientific_name]
@@ -170,6 +178,14 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
     deps.state_store.save(state)
 
     _finish_move(deps, obj, state)
+
+
+def _reject_photo(deps: ProcessorDependencies, obj: S3Object, state: PhotoState) -> None:
+    if not deps.dry_run:
+        deps.s3_gateway.move_to_background(obj.key)
+    state.phase = PHASE_REJECTED
+    if not deps.dry_run:
+        deps.state_store.save(state)
 
 
 def _finish_move(deps: ProcessorDependencies, obj: S3Object, state: PhotoState) -> None:

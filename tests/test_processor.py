@@ -182,6 +182,75 @@ def test_low_confidence_moves_to_background_without_creating_sighting(state_stor
     assert saved.phase == PHASE_REJECTED
 
 
+@pytest.mark.parametrize("confidence", [0.98, 0.35])
+def test_outros_moves_to_background_without_creating_sighting_at_any_confidence(
+    state_store, confidence
+):
+    obj = _s3_object()
+    classifier = FakeClassifier(
+        result=ClassificationResult(3, confidence, [0.01, 0.01, 0.01, confidence])
+    )
+    api_client = FakeApiClient()
+    s3_gateway = FakeS3Gateway()
+    deps = _deps(s3_gateway=s3_gateway, classifier=classifier, api_client=api_client,
+                 state_store=state_store)
+
+    process_photo(deps, obj)
+
+    assert api_client.calls == []
+    assert s3_gateway.moved_to_background == [obj.key]
+    assert s3_gateway.moved == []
+    assert s3_gateway.deleted == []
+    state = state_store.get(obj.key, obj.etag)
+    assert state.phase == PHASE_REJECTED
+    assert state.model_label == "Outros"
+    assert state.confidence == confidence
+    assert state.sighting_id is None
+
+    process_photo(deps, obj)
+    assert classifier.calls == 1
+    assert s3_gateway.moved_to_background == [obj.key]
+
+
+def test_outros_dry_run_does_not_move_photo_or_create_sighting(state_store):
+    obj = _s3_object()
+    classifier = FakeClassifier(result=ClassificationResult(3, 0.98, [0.01, 0.01, 0.0, 0.98]))
+    api_client = FakeApiClient()
+    s3_gateway = FakeS3Gateway()
+    deps = _deps(s3_gateway=s3_gateway, classifier=classifier, api_client=api_client,
+                 state_store=state_store, dry_run=True)
+
+    process_photo(deps, obj)
+
+    assert api_client.calls == []
+    assert s3_gateway.moved_to_background == []
+    assert s3_gateway.moved == []
+    assert state_store.get(obj.key, obj.etag).phase == PHASE_DISCOVERED
+
+
+def test_outros_move_failure_is_retryable_without_creating_sighting(state_store):
+    class FailingS3(FakeS3Gateway):
+        def move_to_background(self, key):
+            raise OSError("S3 indisponível")
+
+    obj = _s3_object()
+    api_client = FakeApiClient()
+    deps = _deps(
+        s3_gateway=FailingS3(),
+        classifier=FakeClassifier(result=ClassificationResult(3, 0.98, [0.01, 0.01, 0.0, 0.98])),
+        api_client=api_client, state_store=state_store,
+    )
+
+    process_photo(deps, obj)
+
+    assert api_client.calls == []
+    state = state_store.get(obj.key, obj.etag)
+    assert state.phase == PHASE_FAILED_RETRY
+    assert state.model_label == "Outros"
+    assert state.attempt_count == 1
+    assert state.last_error == "S3 indisponível"
+
+
 # ---- arquivo inválido ----
 
 def test_invalid_image_moves_to_errors_and_marks_invalid(state_store):
