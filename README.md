@@ -8,8 +8,8 @@ Worker Python (Poetry) que roda continuamente e:
    `CONFIDENCE_THRESHOLD` (padrão `0.85`), cria um avistamento autenticado na API Aves;
    espécies usam sua pasta e `Outros` usa `outros/`, aparecendo como **Ave não identificada**;
 4. quando prevê `Background`, move a foto para `background/` sem criar avistamento,
-   independentemente da confiança. Uma espécie abaixo do limiar também vai para
-   `background/`; `Outros` abaixo do limiar vai para `outros/`, sem aparecer no app;
+   independentemente da confiança. Qualquer previsão abaixo do limiar, incluindo
+   `Outros`, também vai para `background/`, sem aparecer no app;
 5. quando o arquivo não pode ser decodificado como imagem, move para `erros/` (nunca apaga).
 
 O worker é seguro para reiniciar a qualquer momento: o estado de cada foto (chave S3 + ETag)

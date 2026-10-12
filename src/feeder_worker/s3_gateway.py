@@ -137,7 +137,7 @@ class S3Gateway:
         return destination_key
 
     def move_to_background(self, key: str) -> str:
-        """Move para 'background/' uma cena vazia ou espécie abaixo do limiar."""
+        """Move para 'background/' uma cena vazia ou previsão abaixo do limiar."""
         destination_key = f"{BACKGROUND_PREFIX}{PurePosixPath(key).name}"
         self.move(key, destination_key)
         return destination_key
