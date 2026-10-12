@@ -2,7 +2,7 @@
 
 Regras de escopo (definidas no plano):
   * Entrada: somente objetos diretamente na raiz do bucket (chave sem "/").
-  * "app/", "Upload/", "Fotos salvas/", "erros/", "background/" e qualquer
+  * "app/", "Upload/", "Fotos salvas/", "erros/", "background/", "outros/" e qualquer
     prefixo de destino por espécie nunca são tratados como entrada.
   * Mover = copiar para o destino e só então excluir a origem, nessa ordem,
     para nunca perder uma imagem por falha a meio caminho.
@@ -124,7 +124,7 @@ class S3Gateway:
         return destination_key
 
     def move_to_background(self, key: str) -> str:
-        """Move para 'background/' uma predição Outros ou espécie abaixo do limiar."""
+        """Move para 'background/' uma cena vazia ou espécie abaixo do limiar."""
         destination_key = f"{BACKGROUND_PREFIX}{PurePosixPath(key).name}"
         self.move(key, destination_key)
         return destination_key

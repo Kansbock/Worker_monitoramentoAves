@@ -30,5 +30,15 @@
       "tips": "Ofereça frutas picadas, como banana e mamão, em um comedouro de plataforma.",
       "imageUrl": "https://comedouro-aves-fotos-tcc-2026.s3.us-east-1.amazonaws.com/app/SL.JPG"
     }
-  ]
+  ],
+  "unidentifiedBird": {
+    "modelLabel": "Outros",
+    "classIndex": 3,
+    "scientificName": "Espécie não identificada",
+    "commonName": "Ave não identificada",
+    "s3DestinationPrefix": "outros/",
+    "description": "Categoria de avistamento para aves que o modelo não identificou como uma das espécies conhecidas. Não representa uma espécie taxonômica nem uma identificação científica.",
+    "tips": "Observe a foto para auxiliar na identificação. O rótulo indica apenas que o modelo classificou a imagem como Outros.",
+    "imageUrl": ""
+  }
 }

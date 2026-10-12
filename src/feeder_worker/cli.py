@@ -156,7 +156,7 @@ def _seed_species(args: argparse.Namespace) -> int:
     ) as client:
         existing = {record.scientific_name: record for record in client.list_species()}
 
-        for entry in catalog.entries:
+        for entry in catalog.sighting_entries:
             if entry.scientific_name in existing:
                 logger.info("Espécie já cadastrada, mantendo: %s", entry.scientific_name)
                 continue

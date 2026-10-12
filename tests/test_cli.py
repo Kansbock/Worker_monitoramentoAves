@@ -1,7 +1,12 @@
+import json
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import httpx
+
 from feeder_worker import cli
+from feeder_worker.api_client import AvesApiClient
+from feeder_worker.catalog import load_default_catalog
 from feeder_worker.cli import build_parser
 
 
@@ -78,3 +83,45 @@ def test_processor_passes_species_labels_to_classifier(monkeypatch, tmp_path):
         "num_classes": 3,
         "species_class_names": ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira"],
     }
+
+
+def test_seed_registers_unidentified_category_once_without_registering_background(monkeypatch):
+    catalog = load_default_catalog()
+    registered = [
+        {"id": f"sp-{entry.class_index}", "name": entry.common_name,
+         "scientificName": entry.scientific_name}
+        for entry in catalog.entries
+    ]
+    created = []
+
+    def handler(request):
+        if request.method == "GET" and request.url.path == "/api/species":
+            return httpx.Response(200, json=list(registered))
+        if request.method == "POST" and request.url.path == "/api/auth/login":
+            return httpx.Response(200, json={"token": "synthetic-session-token"})
+        if request.method == "POST" and request.url.path == "/api/species":
+            body = json.loads(request.content)
+            created.append(body)
+            record = {**body, "id": "sp-outros"}
+            registered.append(record)
+            return httpx.Response(201, json=record)
+        raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
+
+    settings = SimpleNamespace(
+        api_base_url="https://example.com", api_user_email="test@example.com",
+        api_user_password="synthetic-password",
+    )
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    monkeypatch.setattr(
+        cli, "AvesApiClient",
+        lambda **kwargs: AvesApiClient(**kwargs, transport=httpx.MockTransport(handler)),
+    )
+
+    assert cli._seed_species(SimpleNamespace()) == 0
+    assert cli._seed_species(SimpleNamespace()) == 0
+
+    assert len(created) == 1
+    assert created[0]["name"] == "Ave não identificada"
+    assert created[0]["scientificName"] == "Espécie não identificada"
+    assert len(registered) == 4
+    assert all(record["name"] != "Background" for record in registered)

@@ -16,9 +16,9 @@ from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 from .api_client import AvesApiClient
-from .catalog import SpeciesCatalog
-from .classifier import OTHER_CLASS_LABEL, BirdClassifier, InvalidImageError
-from .s3_gateway import S3Gateway, S3Object
+from .catalog import BACKGROUND_CLASS_LABEL, OTHER_CLASS_LABEL, SpeciesCatalog
+from .classifier import BirdClassifier, InvalidImageError
+from .s3_gateway import BACKGROUND_PREFIX, S3Gateway, S3Object
 from .state import (
     PHASE_COMPLETED,
     PHASE_FAILED_RETRY,
@@ -47,14 +47,14 @@ def resolve_species_ids(catalog: SpeciesCatalog, api_client: AvesApiClient) -> d
     """Mapeia nome científico -> id retornado pela API."""
     registered = {record.scientific_name: record.id for record in api_client.list_species()}
     missing = [
-        entry.scientific_name for entry in catalog.entries if entry.scientific_name not in registered
+        entry.scientific_name for entry in catalog.sighting_entries if entry.scientific_name not in registered
     ]
     if missing:
         raise SpeciesRegistrationError(
             "Espécies do catálogo local ausentes na API (execute "
             "'feeder-worker seed-species' antes de iniciar o worker): " + ", ".join(missing)
         )
-    return {entry.scientific_name: registered[entry.scientific_name] for entry in catalog.entries}
+    return {entry.scientific_name: registered[entry.scientific_name] for entry in catalog.sighting_entries}
 
 
 def _compute_backoff_seconds(attempt_count: int) -> float:
@@ -103,7 +103,7 @@ def process_photo(deps: ProcessorDependencies, obj: S3Object) -> None:
 def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: PhotoState) -> None:
     # Retomada: o avistamento já foi criado numa tentativa anterior — não
     # reclassificar nem chamar a API de novo, apenas concluir o movimento.
-    if state.phase == PHASE_SIGHTING_CREATED:
+    if state.phase == PHASE_SIGHTING_CREATED or state.sighting_id is not None:
         _finish_move(deps, obj, state)
         return
 
@@ -121,12 +121,12 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
             deps.state_store.save(state)
         return
 
-    if result.class_index == deps.catalog.num_classes:
-        state.model_label = OTHER_CLASS_LABEL
+    if result.class_index == deps.catalog.num_classes + 1:
+        state.model_label = BACKGROUND_CLASS_LABEL
         state.confidence = result.confidence
         logger.info(
             "Predição %s (confiança %.4f) em %s; movendo para background/ sem criar avistamento",
-            OTHER_CLASS_LABEL,
+            BACKGROUND_CLASS_LABEL,
             result.confidence,
             obj.key,
         )
@@ -138,14 +138,19 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
     state.confidence = result.confidence
 
     if result.confidence < deps.confidence_threshold:
+        destination_prefix = (
+            species_entry.s3_destination_prefix
+            if species_entry.model_label == OTHER_CLASS_LABEL else BACKGROUND_PREFIX
+        )
         logger.info(
-            "Confiança %.4f abaixo do limiar %.2f em %s (mais provável: %s); movendo para background/",
+            "Confiança %.4f abaixo do limiar %.2f em %s (mais provável: %s); movendo para %s",
             result.confidence,
             deps.confidence_threshold,
             obj.key,
             species_entry.model_label,
+            destination_prefix,
         )
-        _reject_photo(deps, obj, state)
+        _reject_photo(deps, obj, state, destination_prefix=destination_prefix)
         return
 
     species_id = deps.species_ids_by_scientific_name[species_entry.scientific_name]
@@ -180,9 +185,15 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
     _finish_move(deps, obj, state)
 
 
-def _reject_photo(deps: ProcessorDependencies, obj: S3Object, state: PhotoState) -> None:
+def _reject_photo(
+    deps: ProcessorDependencies, obj: S3Object, state: PhotoState,
+    *, destination_prefix: str = BACKGROUND_PREFIX,
+) -> None:
     if not deps.dry_run:
-        deps.s3_gateway.move_to_background(obj.key)
+        if destination_prefix == BACKGROUND_PREFIX:
+            deps.s3_gateway.move_to_background(obj.key)
+        else:
+            deps.s3_gateway.move(obj.key, f"{destination_prefix}{obj.filename}")
     state.phase = PHASE_REJECTED
     if not deps.dry_run:
         deps.state_store.save(state)

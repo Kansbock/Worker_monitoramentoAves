@@ -19,10 +19,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
+from .catalog import EXTRA_CLASS_LABELS
+
 logger = logging.getLogger(__name__)
 
 INPUT_SIZE = (299, 299)  # (largura, altura), conforme IMG_SIZE no notebook de treinamento
-OTHER_CLASS_LABEL = "Outros"
 
 
 class InvalidImageError(Exception):
@@ -78,18 +79,19 @@ class BirdClassifier:
     def _validate_output_shape(self) -> None:
         output_shape = self._model.output_shape
         num_outputs = output_shape[-1]
-        if num_outputs not in (self._num_classes, self._num_classes + 1):
+        if num_outputs not in range(self._num_classes, self._num_classes + len(EXTRA_CLASS_LABELS) + 1):
             raise ValueError(
                 f"O modelo produz {num_outputs} classes, mas o catálogo define "
-                f"{self._num_classes} espécies: são esperadas {self._num_classes} saídas "
-                f"ou {self._num_classes + 1} com {OTHER_CLASS_LABEL}. Verifique MODEL_PATH."
+                f"{self._num_classes} espécies: são esperadas {self._num_classes} saídas, "
+                f"{self._num_classes + 1} com Outros ou {self._num_classes + 2} "
+                "com Outros e Background. Verifique MODEL_PATH."
             )
         self._num_model_outputs = num_outputs
 
     def _validate_class_names(self) -> None:
         labels_path = self._model_path.with_name("class_names.json")
         if not labels_path.is_file():
-            if self._num_model_outputs == self._num_classes + 1:
+            if self._num_model_outputs > self._num_classes:
                 raise FileNotFoundError(
                     f"Modelo de {self._num_model_outputs} classes exige {labels_path} "
                     "exportado junto do modelo para confirmar a ordem dos rótulos."
@@ -103,9 +105,8 @@ class BirdClassifier:
         except json.JSONDecodeError as exc:
             raise ValueError(f"Arquivo de rótulos inválido: {labels_path}") from exc
 
-        expected = self._species_class_names + (
-            [OTHER_CLASS_LABEL] if self._num_model_outputs == self._num_classes + 1 else []
-        )
+        extra_count = self._num_model_outputs - self._num_classes
+        expected = self._species_class_names + list(EXTRA_CLASS_LABELS[:extra_count])
         if labels != expected:
             raise ValueError(
                 f"Rótulos em {labels_path} não correspondem ao catálogo e ao modelo: "

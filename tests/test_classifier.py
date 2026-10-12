@@ -49,6 +49,20 @@ def test_classify_four_output_model_can_predict_outros():
     assert result.all_confidences == pytest.approx([0.01, 0.02, 0.02, 0.95])
 
 
+@pytest.mark.parametrize("class_index", [0, 3, 4])
+def test_classify_five_output_model_preserves_species_outros_and_background_indices(class_index):
+    predictions = [0.01] * 5
+    predictions[class_index] = 0.96
+    model = _StubModel(num_classes=5, predictions=predictions)
+    classifier = BirdClassifier.from_loaded_model(model, num_classes=3)
+
+    result = classifier.classify(_jpeg_bytes())
+
+    assert result.class_index == class_index
+    assert result.confidence == pytest.approx(0.96)
+    assert result.all_confidences == pytest.approx(predictions)
+
+
 def test_classify_resizes_and_does_not_normalize_pixels():
     model = _StubModel(num_classes=3, predictions=[1.0, 0.0, 0.0])
     classifier = BirdClassifier.from_loaded_model(model, num_classes=3)
@@ -71,16 +85,18 @@ def test_classify_raises_invalid_image_error_for_corrupted_bytes():
         classifier.classify(b"not a real image")
 
 
-def test_constructor_validates_output_shape_matches_catalog():
-    model = _StubModel(num_classes=2, predictions=[0.5, 0.5])
+@pytest.mark.parametrize("output_count", [2, 6])
+def test_constructor_validates_output_shape_matches_catalog(output_count):
+    model = _StubModel(num_classes=output_count, predictions=[1 / output_count] * output_count)
 
-    with pytest.raises(ValueError, match="produz 2 classes"):
+    with pytest.raises(ValueError, match=f"produz {output_count} classes"):
         BirdClassifier.from_loaded_model(model, num_classes=3)
 
 
 @pytest.mark.parametrize(
     ("output_count", "labels"),
     [
+        (5, ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira", "Outros", "Background"]),
         (4, ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira", "Outros"]),
         (3, ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira"]),
     ],
@@ -97,7 +113,7 @@ def test_model_label_mapping_matches_species_catalog(tmp_path, monkeypatch, outp
         species_class_names=["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira"],
     )
 
-    assert classifier._num_model_outputs == output_count
+    assert len(classifier.classify(_jpeg_bytes()).all_confidences) == output_count
 
 
 def test_legacy_three_output_model_does_not_require_labels_file(tmp_path, monkeypatch):
@@ -108,13 +124,14 @@ def test_legacy_three_output_model_does_not_require_labels_file(tmp_path, monkey
 
     classifier = BirdClassifier(tmp_path / "model.keras", num_classes=3)
 
-    assert classifier._num_model_outputs == 3
+    assert classifier.classify(_jpeg_bytes()).class_index == 0
 
 
-def test_four_output_model_requires_class_names_file(tmp_path, monkeypatch):
+@pytest.mark.parametrize("output_count", [4, 5])
+def test_models_with_extra_classes_require_class_names_file(tmp_path, monkeypatch, output_count):
     monkeypatch.setattr(
         BirdClassifier, "_load_model",
-        lambda self, path: _StubModel(4, [0.02, 0.02, 0.02, 0.94]),
+        lambda self, path: _StubModel(output_count, [1 / output_count] * output_count),
     )
 
     with pytest.raises(FileNotFoundError, match="class_names.json"):
@@ -127,6 +144,9 @@ def test_four_output_model_requires_class_names_file(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("output_count", "labels"),
     [
+        (5, ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira", "Background", "Outros"]),
+        (5, ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira", "Outros"]),
+        (5, ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira", "Outros", "Backgroud"]),
         (4, ["Avoante", "Bem-Te-Vi", "Outros", "Sabia-Laranjeira"]),
         (4, ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira"]),
         (3, ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira", "Outros"]),
@@ -165,3 +185,28 @@ def test_load_model_raises_file_not_found_for_missing_path(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         BirdClassifier(model_path=missing_path, num_classes=3)
+
+
+def test_loads_real_five_output_keras_model_and_classifies_background(tmp_path):
+    import tensorflow as tf
+
+    inputs = tf.keras.Input(shape=(299, 299, 3))
+    pooled = tf.keras.layers.GlobalAveragePooling2D()(inputs)
+    outputs = tf.keras.layers.Dense(
+        5, activation="softmax", kernel_initializer="zeros",
+        bias_initializer=tf.keras.initializers.Constant([0, 0, 0, 0, 8]),
+    )(pooled)
+    model = tf.keras.Model(inputs, outputs)
+    path = tmp_path / "model.keras"
+    model.save(path)
+    labels = ["Avoante", "Bem-Te-Vi", "Sabia-Laranjeira", "Outros", "Background"]
+    (tmp_path / "class_names.json").write_text(json.dumps(labels), encoding="utf-8")
+
+    classifier = BirdClassifier(
+        path, num_classes=3, species_class_names=labels[:3],
+    )
+    result = classifier.classify(_jpeg_bytes())
+
+    assert result.class_index == 4
+    assert result.confidence > 0.99
+    assert len(result.all_confidences) == 5
