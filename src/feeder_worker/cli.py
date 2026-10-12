@@ -7,6 +7,7 @@ import logging
 import signal
 import sys
 import time
+import httpx
 from types import FrameType
 
 from .api_client import ApiError, AvesApiClient
@@ -88,8 +89,10 @@ def _run(args: argparse.Namespace) -> int:
 
     try:
         while not stop_requested:
+            _process_notifications(deps, settings.notification_processing_enabled)
             examined = run_cycle(deps, settings.max_images_per_cycle)
             logger.info("Ciclo concluído: %d foto(s) examinada(s)", examined)
+            _process_notifications(deps, settings.notification_processing_enabled)
             if args.once:
                 break
             for _ in range(settings.poll_interval_seconds):
@@ -101,6 +104,21 @@ def _run(args: argparse.Namespace) -> int:
         deps.state_store.close()
 
     return 0
+
+
+def _process_notifications(deps: ProcessorDependencies, enabled: bool) -> None:
+    if not enabled or deps.dry_run:
+        return
+    try:
+        batch = deps.api_client.process_notifications()
+    except (ApiError, httpx.HTTPError) as exc:
+        logger.error("Executor de notificações indisponível: category=%s status=%s",
+                     type(exc).__name__, getattr(exc, "status_code", "network"))
+        return
+    logger.info("Notificações: concluídas=%d adiadas=%d falhas=%d",
+                batch.completed, batch.deferred, batch.failed)
+    if batch.failed:
+        logger.warning("Há trabalhos de notificação com falha persistida; revisar a causa na API")
 
 
 def _bootstrap_service_user(args: argparse.Namespace) -> int:

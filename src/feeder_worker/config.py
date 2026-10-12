@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     # Parâmetros operacionais
     poll_interval_seconds: int = Field(60, alias="POLL_INTERVAL_SECONDS", gt=0)
+    notification_processing_enabled: bool = Field(False, alias="NOTIFICATION_PROCESSING_ENABLED")
     max_images_per_cycle: int = Field(10, alias="MAX_IMAGES_PER_CYCLE", gt=0)
     confidence_threshold: float = Field(0.85, alias="CONFIDENCE_THRESHOLD", gt=0, le=1)
     capture_timezone: str = Field("America/Sao_Paulo", alias="CAPTURE_TIMEZONE")

@@ -82,6 +82,7 @@ Principais variáveis (veja `.env.example` para a lista completa e os valores re
 | `STATE_DB_PATH` | Caminho do arquivo SQLite de estado (criado automaticamente). |
 | `POLL_INTERVAL_SECONDS` | Intervalo entre ciclos de verificação (padrão `60`). |
 | `MAX_IMAGES_PER_CYCLE` | Máximo de fotos processadas por ciclo (padrão `10`). |
+| `NOTIFICATION_PROCESSING_ENABLED` | Opt-in para chamar o executor restrito da API (padrão `false`). Nunca processa em dry-run. |
 | `CONFIDENCE_THRESHOLD` | Confiança mínima para reconhecer uma das três espécies (padrão `0.85`); `Outros` sempre é rejeitado. |
 | `CAPTURE_TIMEZONE` | Fuso horário de interpretação dos timestamps (padrão `America/Sao_Paulo`). |
 
@@ -120,6 +121,31 @@ poetry run feeder-worker run
 ```
 
 O worker roda em loop até ser interrompido (Ctrl+C ou `--once` para um único ciclo).
+
+### Notificações pendentes
+
+Após implantação/ativação autorizada da API, configure
+`NOTIFICATION_PROCESSING_ENABLED=true`. A API deve ter o mesmo flag habilitado
+e `NOTIFICATION_RUNNER_USER_ID` igual ao UUID da conta de serviço existente.
+Outra conta recebe 403; processamento desabilitado ou sem configuração
+retorna 503. O client renova JWT uma vez após 401, conforme o login existente.
+
+Antes e depois de cada ciclo, inclusive sem fotos e em `--once`, o worker
+chama `POST /api/internal/notification-jobs/process`, sem parâmetros de envio.
+Recebe somente contagens de concluídos/adiados/falhas; a chave FCM e tokens
+dos dispositivos ficam na API, nunca neste processo. `--dry-run` não chama
+o executor nem envia push.
+
+A API grava outbox junto ao avistamento em `aves-sightings`; reiniciar o
+worker não perde trabalhos. Falha do executor é registrada sem reabrir fotos
+concluídas ou interromper classificação. Worker parado, bootstrap/modelo
+inválido ou credenciais indisponíveis atrasam histórico/push até retomar.
+O intervalo de 60 s não é SLA de entrega. Falhas terminais ficam persistidas
+na API para revisão autorizada, sem apagar histórico.
+
+No rollback, desligue este flag e o processamento da API, preservando SQLite,
+fila e caixas. Ativação real exige confirmação e APK Android próprio;
+testes locais não enviam push.
 
 ## Implantação como serviço no Windows (Agendador de Tarefas)
 

@@ -220,3 +220,35 @@ def test_context_manager_closes_client():
         client.authenticate()
 
     assert client._client.is_closed
+
+
+def test_notification_executor_renews_jwt_and_returns_only_counters():
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(200, json={"token": "synthetic-token"})
+        assert request.url.path == "/api/internal/notification-jobs/process"
+        assert request.method == "POST"
+        assert request.content == b""
+        if calls.count(request.url.path) == 1:
+            return httpx.Response(401, json={"message": "expired"})
+        return httpx.Response(200, json={"completed": 1, "deferred": 2, "failed": 0})
+
+    with _client_with_handler(handler) as client:
+        result = client.process_notifications()
+    assert (result.completed, result.deferred, result.failed) == (1, 2, 0)
+    assert calls.count("/api/auth/login") == 2
+
+
+@pytest.mark.parametrize("body", [{"completed": True, "deferred": 0, "failed": 0},
+                                 {"completed": -1, "deferred": 0, "failed": 0}, {}])
+def test_notification_executor_rejects_invalid_results(body):
+    def handler(request):
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(200, json={"token": "synthetic-token"})
+        return httpx.Response(200, json=body)
+    with _client_with_handler(handler) as client:
+        with pytest.raises(ApiError, match="Resposta inválida"):
+            client.process_notifications()
