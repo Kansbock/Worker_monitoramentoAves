@@ -16,9 +16,9 @@ from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 from .api_client import AvesApiClient
-from .catalog import BACKGROUND_CLASS_LABEL, OTHER_CLASS_LABEL, SpeciesCatalog
+from .catalog import BACKGROUND_CLASS_LABEL, SpeciesCatalog
 from .classifier import BirdClassifier, InvalidImageError
-from .s3_gateway import BACKGROUND_PREFIX, S3Gateway, S3Object
+from .s3_gateway import S3Gateway, S3Object
 from .state import (
     PHASE_COMPLETED,
     PHASE_FAILED_RETRY,
@@ -138,19 +138,14 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
     state.confidence = result.confidence
 
     if result.confidence < deps.confidence_threshold:
-        destination_prefix = (
-            species_entry.s3_destination_prefix
-            if species_entry.model_label == OTHER_CLASS_LABEL else BACKGROUND_PREFIX
-        )
         logger.info(
-            "Confiança %.4f abaixo do limiar %.2f em %s (mais provável: %s); movendo para %s",
+            "Confiança %.4f abaixo do limiar %.2f em %s (mais provável: %s); movendo para background/",
             result.confidence,
             deps.confidence_threshold,
             obj.key,
             species_entry.model_label,
-            destination_prefix,
         )
-        _reject_photo(deps, obj, state, destination_prefix=destination_prefix)
+        _reject_photo(deps, obj, state)
         return
 
     species_id = deps.species_ids_by_scientific_name[species_entry.scientific_name]
@@ -185,15 +180,9 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
     _finish_move(deps, obj, state)
 
 
-def _reject_photo(
-    deps: ProcessorDependencies, obj: S3Object, state: PhotoState,
-    *, destination_prefix: str = BACKGROUND_PREFIX,
-) -> None:
+def _reject_photo(deps: ProcessorDependencies, obj: S3Object, state: PhotoState) -> None:
     if not deps.dry_run:
-        if destination_prefix == BACKGROUND_PREFIX:
-            deps.s3_gateway.move_to_background(obj.key)
-        else:
-            deps.s3_gateway.move(obj.key, f"{destination_prefix}{obj.filename}")
+        deps.s3_gateway.move_to_background(obj.key)
     state.phase = PHASE_REJECTED
     if not deps.dry_run:
         deps.state_store.save(state)

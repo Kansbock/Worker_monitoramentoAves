@@ -184,7 +184,7 @@ def test_low_confidence_moves_to_background_without_creating_sighting(state_stor
 
 
 @pytest.mark.parametrize("output_count", [4, 5])
-@pytest.mark.parametrize("confidence", [0.98, 0.85, 0.35])
+@pytest.mark.parametrize("confidence", [0.98, 0.85, 0.8499, 0.35])
 def test_outros_uses_separate_folder_and_creates_sighting_only_at_threshold(
     state_store, confidence, output_count
 ):
@@ -206,8 +206,8 @@ def test_outros_uses_separate_folder_and_creates_sighting_only_at_threshold(
     if accepted:
         assert api_client.calls[0]["species_id"] == "sp-outros"
         assert api_client.calls[0]["image_url"].endswith(f"/outros/{obj.filename}")
-    assert s3_gateway.moved_to_background == []
-    assert s3_gateway.moved == [(obj.key, f"outros/{obj.filename}")]
+    assert s3_gateway.moved_to_background == ([] if accepted else [obj.key])
+    assert s3_gateway.moved == ([(obj.key, f"outros/{obj.filename}")] if accepted else [])
     assert s3_gateway.deleted == []
     state = state_store.get(obj.key, obj.etag)
     assert state.phase == (PHASE_COMPLETED if accepted else PHASE_REJECTED)
@@ -218,7 +218,8 @@ def test_outros_uses_separate_folder_and_creates_sighting_only_at_threshold(
     process_photo(deps, obj)
     assert classifier.calls == 1
     assert len(api_client.calls) == int(accepted)
-    assert s3_gateway.moved == [(obj.key, f"outros/{obj.filename}")]
+    assert s3_gateway.moved_to_background == ([] if accepted else [obj.key])
+    assert s3_gateway.moved == ([(obj.key, f"outros/{obj.filename}")] if accepted else [])
 
 
 @pytest.mark.parametrize("confidence", [0.98, 0.25])
@@ -248,9 +249,10 @@ def test_background_never_creates_sighting_at_any_confidence(state_store, confid
     assert state.sighting_id is None
 
 
-def test_outros_dry_run_does_not_move_photo_or_create_sighting(state_store):
+@pytest.mark.parametrize("confidence", [0.98, 0.8499])
+def test_outros_dry_run_does_not_move_photo_or_create_sighting(state_store, confidence):
     obj = _s3_object()
-    classifier = FakeClassifier(result=ClassificationResult(3, 0.98, [0.01, 0.01, 0.0, 0.98]))
+    classifier = FakeClassifier(result=ClassificationResult(3, confidence, [0.01, 0.01, 0.0, confidence]))
     api_client = FakeApiClient()
     s3_gateway = FakeS3Gateway()
     deps = _deps(s3_gateway=s3_gateway, classifier=classifier, api_client=api_client,
@@ -282,7 +284,13 @@ def test_background_dry_run_does_not_move_photo_or_create_sighting(state_store):
     assert state_store.get(obj.key, obj.etag).phase == PHASE_DISCOVERED
 
 
-def test_background_move_failure_is_retryable_without_creating_sighting(state_store):
+@pytest.mark.parametrize(
+    ("class_index", "confidence", "model_label"),
+    [(4, 0.96, "Background"), (3, 0.8499, "Outros")],
+)
+def test_background_move_failure_is_retryable_without_creating_sighting(
+    state_store, class_index, confidence, model_label
+):
     class FailingS3(FakeS3Gateway):
         def move_to_background(self, key):
             raise OSError("S3 indisponível")
@@ -291,7 +299,7 @@ def test_background_move_failure_is_retryable_without_creating_sighting(state_st
     api_client = FakeApiClient()
     deps = _deps(
         s3_gateway=FailingS3(),
-        classifier=FakeClassifier(result=ClassificationResult(4, 0.96, [0.01] * 4 + [0.96])),
+        classifier=FakeClassifier(result=ClassificationResult(class_index, confidence, [0.01] * 5)),
         api_client=api_client, state_store=state_store,
     )
 
@@ -300,7 +308,7 @@ def test_background_move_failure_is_retryable_without_creating_sighting(state_st
     assert api_client.calls == []
     state = state_store.get(obj.key, obj.etag)
     assert state.phase == PHASE_FAILED_RETRY
-    assert state.model_label == "Background"
+    assert state.model_label == model_label
     assert state.attempt_count == 1
     assert state.last_error == "S3 indisponível"
 
