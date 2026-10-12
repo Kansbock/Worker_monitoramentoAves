@@ -16,11 +16,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", populate_by_name=True
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+        protected_namespaces=(),
     )
 
     # AWS
-    aws_profile: str = Field(..., alias="AWS_PROFILE")
+    aws_profile: str | None = Field(default=None, alias="AWS_PROFILE")
     aws_region: str = Field("us-east-1", alias="AWS_REGION")
     s3_bucket: str = Field(..., alias="S3_BUCKET")
 
