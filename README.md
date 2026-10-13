@@ -78,6 +78,17 @@ A sessão SSO expira periodicamente; quando expirar, o worker falhará com uma m
 **preservará todas as fotos na raiz** (nada é apagado/movido em caso de falha de credencial).
 Basta rodar `aws sso login --profile <perfil>` novamente e reiniciar o worker.
 
+## Acesso público às imagens
+
+O app usa URLs regionais S3 diretas. No bucket
+`comedouro-aves-fotos-tcc-2026`, a bucket policy permite somente
+`s3:GetObject` público em `Avoante/`, `Bem-te-vi/`, `Sabia-Laranjeira/`,
+`app/` e `outros/`. Não há listagem ou escrita pública; `Upload/`,
+`Fotos salvas/`, `erros/` e `background/` não recebem esse acesso.
+ACLs públicas continuam bloqueadas. Não adicionar um `Deny` com
+`Principal: "*"` nas pastas internas: ele também bloquearia as leituras
+autenticadas necessárias para copiar/mover as fotos.
+
 ## Variáveis de ambiente
 
 Copie `.env.example` para `.env` e preencha os valores (o arquivo `.env` nunca deve ser
