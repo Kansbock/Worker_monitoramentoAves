@@ -201,3 +201,18 @@ testes locais não enviam push.
 ```powershell
 poetry run pytest
 ```
+## Avistamentos com várias fotos
+
+A API agrupa fotos pelo conjunto de espécies e pela data/hora/minuto de
+captura, ignorando segundos e milissegundos na identidade do grupo. Cada
+avistamento admite até quatro fotos; a quinta cria outro grupo no mesmo
+minuto. O worker continua enviando uma foto por POST, com os segundos
+originais e `Idempotency-Key` baseada em bucket, chave e ETag. Várias linhas
+do estado SQLite podem ter o mesmo `sighting_id`; cada objeto é movido e
+retomado independentemente. Não truncar o payload nem trocar a chave de
+idempotência pela chave de grupo.
+
+Adicionar foto a um grupo não gera outra notificação; a criação de um novo
+grupo, inclusive após quatro fotos, gera o trabalho de notificação normal.
+IDs históricos consolidados continuam consultáveis pelos aliases da API;
+a migração não altera objetos S3 nem exige reclassificar fotos concluídas.

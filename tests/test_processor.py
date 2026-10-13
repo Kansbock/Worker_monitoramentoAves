@@ -163,6 +163,33 @@ def test_recognized_species_creates_sighting_and_moves_photo(state_store):
     assert saved.sighting_id == "sig-99"
 
 
+def test_distinct_photos_can_share_api_group_id_and_roll_over_without_losing_moves(state_store):
+    api_client = FakeApiClient()
+    gateway = FakeS3Gateway()
+    deps = _deps(s3_gateway=gateway, api_client=api_client, state_store=state_store)
+    objects = [
+        _s3_object(key=f"foto_20260910_1015{n:02d}_{n}.jpg", etag=f"synthetic-etag-{n}")
+        for n in range(9)
+    ]
+    for n, obj in enumerate(objects):
+        api_client.sighting_id = f"group-{n // 4}"
+        process_photo(deps, obj)
+    assert len(api_client.calls) == 9
+    assert len({call["idempotency_key"] for call in api_client.calls}) == 9
+    assert [call["sighting_time"].second for call in api_client.calls] == list(range(9))
+    assert [state_store.get(obj.key, obj.etag).sighting_id for obj in objects] == [
+        "group-0", "group-0", "group-0", "group-0",
+        "group-1", "group-1", "group-1", "group-1", "group-2",
+    ]
+    assert all(state_store.get(obj.key, obj.etag).phase == PHASE_COMPLETED for obj in objects)
+    assert len(gateway.moved) == 9
+    for obj in objects:
+        process_photo(deps, obj)
+    assert len(api_client.calls) == 9
+    assert len(gateway.moved) == 9
+    assert gateway.deleted == []
+
+
 # ---- confiança abaixo do limiar ----
 
 def test_low_confidence_moves_to_background_without_creating_sighting(state_store):
