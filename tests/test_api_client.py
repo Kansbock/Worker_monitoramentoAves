@@ -188,6 +188,33 @@ def test_create_sighting_raises_api_error_with_parsed_message_on_failure():
     assert exc_info.value.message == "Idempotency-Key já foi usada"
 
 
+def test_grouped_response_keeps_single_photo_request_and_original_seconds():
+    import json
+
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(200, json={"token": "synthetic-token"})
+        requests.append(json.loads(request.content))
+        return httpx.Response(201, json={
+            "id": "group-1", "species": [{"id": "sp-1"}],
+            "time": "10:15:00", "imageUrl": "https://synthetic.test/first",
+            "imageUrls": ["https://synthetic.test/first", "https://synthetic.test/second"],
+        })
+
+    with _client_with_handler(handler) as client:
+        record = client.create_sighting(
+            species_id="sp-1", sighting_date=date(2026, 9, 10),
+            sighting_time=time(10, 15, 59), image_url="https://synthetic.test/second",
+            idempotency_key="synthetic-object-2",
+        )
+    assert record.id == "group-1"
+    assert requests[0]["time"] == "10:15:59"
+    assert requests[0]["imageUrl"] == "https://synthetic.test/second"
+    assert "imageUrls" not in requests[0]
+
+
 def test_create_sighting_raises_api_error_with_raw_text_when_body_is_not_json():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
