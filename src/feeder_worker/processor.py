@@ -1,5 +1,5 @@
 """Orquestra o processamento de cada foto: classificar, registrar o
-avistamento, mover ou excluir, e permitir retomada segura em caso de falha.
+avistamento ou rejeitar, mover e permitir retomada segura em caso de falha.
 
 Cada foto é tratada isoladamente: uma falha em uma imagem nunca interrompe o
 processamento das demais no mesmo ciclo. O estado local garante que, ao
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 from .api_client import AvesApiClient
-from .catalog import SpeciesCatalog
+from .catalog import BACKGROUND_CLASS_LABEL, SpeciesCatalog
 from .classifier import BirdClassifier, InvalidImageError
 from .s3_gateway import S3Gateway, S3Object
 from .state import (
@@ -47,14 +47,14 @@ def resolve_species_ids(catalog: SpeciesCatalog, api_client: AvesApiClient) -> d
     """Mapeia nome científico -> id retornado pela API."""
     registered = {record.scientific_name: record.id for record in api_client.list_species()}
     missing = [
-        entry.scientific_name for entry in catalog.entries if entry.scientific_name not in registered
+        entry.scientific_name for entry in catalog.sighting_entries if entry.scientific_name not in registered
     ]
     if missing:
         raise SpeciesRegistrationError(
             "Espécies do catálogo local ausentes na API (execute "
             "'feeder-worker seed-species' antes de iniciar o worker): " + ", ".join(missing)
         )
-    return {entry.scientific_name: registered[entry.scientific_name] for entry in catalog.entries}
+    return {entry.scientific_name: registered[entry.scientific_name] for entry in catalog.sighting_entries}
 
 
 def _compute_backoff_seconds(attempt_count: int) -> float:
@@ -103,7 +103,7 @@ def process_photo(deps: ProcessorDependencies, obj: S3Object) -> None:
 def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: PhotoState) -> None:
     # Retomada: o avistamento já foi criado numa tentativa anterior — não
     # reclassificar nem chamar a API de novo, apenas concluir o movimento.
-    if state.phase == PHASE_SIGHTING_CREATED:
+    if state.phase == PHASE_SIGHTING_CREATED or state.sighting_id is not None:
         _finish_move(deps, obj, state)
         return
 
@@ -121,6 +121,18 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
             deps.state_store.save(state)
         return
 
+    if result.class_index == deps.catalog.num_classes + 1:
+        state.model_label = BACKGROUND_CLASS_LABEL
+        state.confidence = result.confidence
+        logger.info(
+            "Predição %s (confiança %.4f) em %s; movendo para background/ sem criar avistamento",
+            BACKGROUND_CLASS_LABEL,
+            result.confidence,
+            obj.key,
+        )
+        _reject_photo(deps, obj, state)
+        return
+
     species_entry = deps.catalog.by_class_index(result.class_index)
     state.model_label = species_entry.model_label
     state.confidence = result.confidence
@@ -133,11 +145,7 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
             obj.key,
             species_entry.model_label,
         )
-        if not deps.dry_run:
-            deps.s3_gateway.move_to_background(obj.key)
-        state.phase = PHASE_REJECTED
-        if not deps.dry_run:
-            deps.state_store.save(state)
+        _reject_photo(deps, obj, state)
         return
 
     species_id = deps.species_ids_by_scientific_name[species_entry.scientific_name]
@@ -170,6 +178,14 @@ def _process_photo_inner(deps: ProcessorDependencies, obj: S3Object, state: Phot
     deps.state_store.save(state)
 
     _finish_move(deps, obj, state)
+
+
+def _reject_photo(deps: ProcessorDependencies, obj: S3Object, state: PhotoState) -> None:
+    if not deps.dry_run:
+        deps.s3_gateway.move_to_background(obj.key)
+    state.phase = PHASE_REJECTED
+    if not deps.dry_run:
+        deps.state_store.save(state)
 
 
 def _finish_move(deps: ProcessorDependencies, obj: S3Object, state: PhotoState) -> None:

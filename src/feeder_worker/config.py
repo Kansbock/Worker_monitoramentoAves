@@ -16,11 +16,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", populate_by_name=True
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+        protected_namespaces=(),
     )
 
     # AWS
-    aws_profile: str = Field(..., alias="AWS_PROFILE")
+    aws_profile: str | None = Field(default=None, alias="AWS_PROFILE")
     aws_region: str = Field("us-east-1", alias="AWS_REGION")
     s3_bucket: str = Field(..., alias="S3_BUCKET")
 
@@ -36,6 +40,7 @@ class Settings(BaseSettings):
 
     # Parâmetros operacionais
     poll_interval_seconds: int = Field(60, alias="POLL_INTERVAL_SECONDS", gt=0)
+    notification_processing_enabled: bool = Field(False, alias="NOTIFICATION_PROCESSING_ENABLED")
     max_images_per_cycle: int = Field(10, alias="MAX_IMAGES_PER_CYCLE", gt=0)
     confidence_threshold: float = Field(0.85, alias="CONFIDENCE_THRESHOLD", gt=0, le=1)
     capture_timezone: str = Field("America/Sao_Paulo", alias="CAPTURE_TIMEZONE")

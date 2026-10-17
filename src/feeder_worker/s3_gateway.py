@@ -2,7 +2,7 @@
 
 Regras de escopo (definidas no plano):
   * Entrada: somente objetos diretamente na raiz do bucket (chave sem "/").
-  * "app/", "Upload/", "Fotos salvas/", "erros/", "background/" e qualquer
+  * "app/", "Upload/", "Fotos salvas/", "erros/", "background/", "outros/" e qualquer
     prefixo de destino por espécie nunca são tratados como entrada.
   * Mover = copiar para o destino e só então excluir a origem, nessa ordem,
     para nunca perder uma imagem por falha a meio caminho.
@@ -17,6 +17,7 @@ from pathlib import PurePosixPath
 
 import boto3
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ProfileNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,20 @@ class S3Object:
 
 
 class S3Gateway:
-    def __init__(self, bucket: str, region: str, profile: str, excluded_prefixes: set[str]):
-        session = boto3.Session(profile_name=profile, region_name=region)
+    def __init__(self, bucket: str, region: str, profile: str | None, excluded_prefixes: set[str]):
+        session_kwargs = {"region_name": region}
+        if profile:
+            try:
+                boto3.Session(profile_name=profile, region_name=region)
+            except ProfileNotFound:
+                logger.warning(
+                    "Perfil AWS %r não encontrado; usando credenciais padrão do ambiente.",
+                    profile,
+                )
+            else:
+                session_kwargs["profile_name"] = profile
+
+        session = boto3.Session(**session_kwargs)
         self._client = session.client("s3", config=BotoConfig(retries={"max_attempts": 5, "mode": "standard"}))
         self._bucket = bucket
         # Prefixos nunca tratados como entrada: pastas de destino por espécie
@@ -124,9 +137,7 @@ class S3Gateway:
         return destination_key
 
     def move_to_background(self, key: str) -> str:
-        """Move para a pasta 'background/' na raiz do bucket (usada quando
-        nenhuma espécie é reconhecida com confiança suficiente), em vez de
-        excluir a imagem."""
+        """Move para 'background/' uma cena vazia ou previsão abaixo do limiar."""
         destination_key = f"{BACKGROUND_PREFIX}{PurePosixPath(key).name}"
         self.move(key, destination_key)
         return destination_key

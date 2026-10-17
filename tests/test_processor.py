@@ -34,6 +34,7 @@ SPECIES_IDS = {
     "Zenaida auriculata": "sp-avoante",
     "Pitangus sulphuratus": "sp-bem-te-vi",
     "Turdus rufiventris": "sp-sabia",
+    "Espécie não identificada": "sp-outros",
 }
 
 
@@ -162,6 +163,33 @@ def test_recognized_species_creates_sighting_and_moves_photo(state_store):
     assert saved.sighting_id == "sig-99"
 
 
+def test_distinct_photos_can_share_api_group_id_and_roll_over_without_losing_moves(state_store):
+    api_client = FakeApiClient()
+    gateway = FakeS3Gateway()
+    deps = _deps(s3_gateway=gateway, api_client=api_client, state_store=state_store)
+    objects = [
+        _s3_object(key=f"foto_20260910_1015{n:02d}_{n}.jpg", etag=f"synthetic-etag-{n}")
+        for n in range(9)
+    ]
+    for n, obj in enumerate(objects):
+        api_client.sighting_id = f"group-{n // 4}"
+        process_photo(deps, obj)
+    assert len(api_client.calls) == 9
+    assert len({call["idempotency_key"] for call in api_client.calls}) == 9
+    assert [call["sighting_time"].second for call in api_client.calls] == list(range(9))
+    assert [state_store.get(obj.key, obj.etag).sighting_id for obj in objects] == [
+        "group-0", "group-0", "group-0", "group-0",
+        "group-1", "group-1", "group-1", "group-1", "group-2",
+    ]
+    assert all(state_store.get(obj.key, obj.etag).phase == PHASE_COMPLETED for obj in objects)
+    assert len(gateway.moved) == 9
+    for obj in objects:
+        process_photo(deps, obj)
+    assert len(api_client.calls) == 9
+    assert len(gateway.moved) == 9
+    assert gateway.deleted == []
+
+
 # ---- confiança abaixo do limiar ----
 
 def test_low_confidence_moves_to_background_without_creating_sighting(state_store):
@@ -180,6 +208,174 @@ def test_low_confidence_moves_to_background_without_creating_sighting(state_stor
 
     saved = state_store.get(obj.key, obj.etag)
     assert saved.phase == PHASE_REJECTED
+
+
+@pytest.mark.parametrize("output_count", [4, 5])
+@pytest.mark.parametrize("confidence", [0.98, 0.85, 0.8499, 0.35])
+def test_outros_uses_separate_folder_and_creates_sighting_only_at_threshold(
+    state_store, confidence, output_count
+):
+    obj = _s3_object()
+    classifier = FakeClassifier(
+        result=ClassificationResult(
+            3, confidence, [0.01, 0.01, 0.01, confidence] + [0.0] * (output_count - 4),
+        )
+    )
+    api_client = FakeApiClient()
+    s3_gateway = FakeS3Gateway()
+    deps = _deps(s3_gateway=s3_gateway, classifier=classifier, api_client=api_client,
+                 state_store=state_store)
+
+    process_photo(deps, obj)
+
+    accepted = confidence >= deps.confidence_threshold
+    assert len(api_client.calls) == int(accepted)
+    if accepted:
+        assert api_client.calls[0]["species_id"] == "sp-outros"
+        assert api_client.calls[0]["image_url"].endswith(f"/outros/{obj.filename}")
+    assert s3_gateway.moved_to_background == ([] if accepted else [obj.key])
+    assert s3_gateway.moved == ([(obj.key, f"outros/{obj.filename}")] if accepted else [])
+    assert s3_gateway.deleted == []
+    state = state_store.get(obj.key, obj.etag)
+    assert state.phase == (PHASE_COMPLETED if accepted else PHASE_REJECTED)
+    assert state.model_label == "Outros"
+    assert state.confidence == confidence
+    assert state.sighting_id == ("sig-1" if accepted else None)
+
+    process_photo(deps, obj)
+    assert classifier.calls == 1
+    assert len(api_client.calls) == int(accepted)
+    assert s3_gateway.moved_to_background == ([] if accepted else [obj.key])
+    assert s3_gateway.moved == ([(obj.key, f"outros/{obj.filename}")] if accepted else [])
+
+
+@pytest.mark.parametrize("confidence", [0.98, 0.25])
+def test_background_never_creates_sighting_at_any_confidence(state_store, confidence):
+    obj = _s3_object()
+    classifier = FakeClassifier(
+        result=ClassificationResult(4, confidence, [0.01, 0.01, 0.01, 0.01, confidence]),
+    )
+    api_client = FakeApiClient()
+    s3_gateway = FakeS3Gateway()
+    deps = _deps(
+        s3_gateway=s3_gateway, classifier=classifier, api_client=api_client,
+        state_store=state_store,
+    )
+
+    process_photo(deps, obj)
+    process_photo(deps, obj)
+
+    assert classifier.calls == 1
+    assert api_client.calls == []
+    assert s3_gateway.moved_to_background == [obj.key]
+    assert s3_gateway.moved == []
+    state = state_store.get(obj.key, obj.etag)
+    assert state.phase == PHASE_REJECTED
+    assert state.model_label == "Background"
+    assert state.confidence == confidence
+    assert state.sighting_id is None
+
+
+@pytest.mark.parametrize("confidence", [0.98, 0.8499])
+def test_outros_dry_run_does_not_move_photo_or_create_sighting(state_store, confidence):
+    obj = _s3_object()
+    classifier = FakeClassifier(result=ClassificationResult(3, confidence, [0.01, 0.01, 0.0, confidence]))
+    api_client = FakeApiClient()
+    s3_gateway = FakeS3Gateway()
+    deps = _deps(s3_gateway=s3_gateway, classifier=classifier, api_client=api_client,
+                 state_store=state_store, dry_run=True)
+
+    process_photo(deps, obj)
+
+    assert api_client.calls == []
+    assert s3_gateway.moved_to_background == []
+    assert s3_gateway.moved == []
+    assert state_store.get(obj.key, obj.etag).phase == PHASE_DISCOVERED
+
+
+def test_background_dry_run_does_not_move_photo_or_create_sighting(state_store):
+    obj = _s3_object()
+    api_client = FakeApiClient()
+    s3_gateway = FakeS3Gateway()
+    deps = _deps(
+        s3_gateway=s3_gateway, api_client=api_client, state_store=state_store,
+        classifier=FakeClassifier(result=ClassificationResult(4, 0.96, [0.01] * 4 + [0.96])),
+        dry_run=True,
+    )
+
+    process_photo(deps, obj)
+
+    assert api_client.calls == []
+    assert s3_gateway.moved_to_background == []
+    assert s3_gateway.moved == []
+    assert state_store.get(obj.key, obj.etag).phase == PHASE_DISCOVERED
+
+
+@pytest.mark.parametrize(
+    ("class_index", "confidence", "model_label"),
+    [(4, 0.96, "Background"), (3, 0.8499, "Outros")],
+)
+def test_background_move_failure_is_retryable_without_creating_sighting(
+    state_store, class_index, confidence, model_label
+):
+    class FailingS3(FakeS3Gateway):
+        def move_to_background(self, key):
+            raise OSError("S3 indisponível")
+
+    obj = _s3_object()
+    api_client = FakeApiClient()
+    deps = _deps(
+        s3_gateway=FailingS3(),
+        classifier=FakeClassifier(result=ClassificationResult(class_index, confidence, [0.01] * 5)),
+        api_client=api_client, state_store=state_store,
+    )
+
+    process_photo(deps, obj)
+
+    assert api_client.calls == []
+    state = state_store.get(obj.key, obj.etag)
+    assert state.phase == PHASE_FAILED_RETRY
+    assert state.model_label == model_label
+    assert state.attempt_count == 1
+    assert state.last_error == "S3 indisponível"
+
+
+def test_outros_move_retry_preserves_sighting_without_reclassification(state_store):
+    class FailingS3(FakeS3Gateway):
+        fail_move = True
+
+        def move(self, source_key, destination_key):
+            if self.fail_move:
+                raise OSError("S3 indisponível")
+            return super().move(source_key, destination_key)
+
+    obj = _s3_object()
+    api_client = FakeApiClient()
+    s3_gateway = FailingS3()
+    classifier = FakeClassifier(result=ClassificationResult(3, 0.96, [0.01] * 3 + [0.96, 0.01]))
+    deps = _deps(
+        s3_gateway=s3_gateway, classifier=classifier, api_client=api_client,
+        state_store=state_store,
+    )
+
+    process_photo(deps, obj)
+
+    state = state_store.get(obj.key, obj.etag)
+    assert state.phase == PHASE_FAILED_RETRY
+    assert state.sighting_id == "sig-1"
+    assert state.destination_key == f"outros/{obj.filename}"
+    state.next_retry_at = 0
+    state_store.save(state)
+    s3_gateway.fail_move = False
+    classifier.error = AssertionError("não deve reclassificar um avistamento já criado")
+    api_client.error = AssertionError("não deve recriar o avistamento")
+
+    process_photo(deps, obj)
+
+    assert len(api_client.calls) == 1
+    assert classifier.calls == 1
+    assert s3_gateway.moved == [(obj.key, f"outros/{obj.filename}")]
+    assert state_store.get(obj.key, obj.etag).phase == PHASE_COMPLETED
 
 
 # ---- arquivo inválido ----
@@ -334,6 +530,18 @@ def test_resolve_species_ids_raises_when_catalog_species_missing_from_api():
 
     with pytest.raises(SpeciesRegistrationError, match="seed-species"):
         resolve_species_ids(CATALOG, PartialApiClient())
+
+
+def test_resolve_species_ids_requires_unidentified_bird_category_before_startup():
+    class IdentifiedSpeciesOnly(FakeApiClient):
+        def list_species(self):
+            return [
+                record for record in super().list_species()
+                if record.scientific_name != "Espécie não identificada"
+            ]
+
+    with pytest.raises(SpeciesRegistrationError, match="Espécie não identificada"):
+        resolve_species_ids(CATALOG, IdentifiedSpeciesOnly())
 
 
 # ---- limite de imagens por ciclo ----

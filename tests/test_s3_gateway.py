@@ -76,6 +76,8 @@ def test_list_root_images_excludes_nested_keys_and_known_prefixes():
             _item("Fotos salvas/y.jpg"),
             _item("Avoante/already-moved.jpg"),
             _item("erros/bad.jpg"),
+            _item("outros/unidentified.jpg"),
+            _item("background/empty.jpg"),
             _item("nested/dir/z.jpg"),
         )
     ]

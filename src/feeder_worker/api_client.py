@@ -37,6 +37,13 @@ class SightingRecord:
     species_ids: list[str]
 
 
+@dataclass(frozen=True)
+class NotificationBatch:
+    completed: int
+    deferred: int
+    failed: int
+
+
 class AvesApiClient:
     def __init__(
         self,
@@ -96,6 +103,18 @@ class AvesApiClient:
         return response
 
     # ---- usuário de serviço (bootstrap) ----
+
+    def process_notifications(self) -> NotificationBatch:
+        response = self._authorized_request("POST", "/api/internal/notification-jobs/process")
+        self._raise_for_status(response)
+        try:
+            body = response.json()
+            values = [body[key] for key in ("completed", "deferred", "failed")]
+            if any(type(value) is not int or value < 0 for value in values):
+                raise ValueError("invalid counters")
+        except (ValueError, KeyError, TypeError):
+            raise ApiError(502, "Resposta inválida do executor de notificações") from None
+        return NotificationBatch(*values)
 
     def register_user(self, name: str, email: str, password: str) -> bool:
         """Cria o usuário de serviço. Retorna True se criado agora, False se
