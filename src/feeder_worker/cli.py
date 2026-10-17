@@ -9,7 +9,8 @@ import sys
 import time
 import httpx
 from types import FrameType
-
+import subprocess
+from botocore.exceptions import TokenRetrievalError
 from .api_client import ApiError, AvesApiClient
 from .catalog import load_default_catalog
 from .classifier import BirdClassifier
@@ -70,13 +71,6 @@ def _build_processor_dependencies(settings: Settings, dry_run: bool) -> Processo
 
 def _run(args: argparse.Namespace) -> int:
     settings = load_settings()
-
-    try:
-        deps = _build_processor_dependencies(settings, dry_run=args.dry_run)
-    except SpeciesRegistrationError as exc:
-        logger.error(str(exc))
-        return 1
-
     stop_requested = False
 
     def _handle_signal(signum: int, frame: FrameType | None) -> None:
@@ -87,21 +81,58 @@ def _run(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    try:
-        while not stop_requested:
-            _process_notifications(deps, settings.notification_processing_enabled)
-            examined = run_cycle(deps, settings.max_images_per_cycle)
-            logger.info("Ciclo concluído: %d foto(s) examinada(s)", examined)
-            _process_notifications(deps, settings.notification_processing_enabled)
-            if args.once:
-                break
-            for _ in range(settings.poll_interval_seconds):
-                if stop_requested:
+    def _try_renew_sso(exc: Exception) -> bool:
+        """Verifica se a exceção é de token SSO expirado e tenta renovar automaticamente."""
+        if isinstance(exc, TokenRetrievalError) or "Token has expired" in str(exc) or "InvalidGrantException" in str(exc):
+            logger.warning("Token AWS SSO expirado detectado. Tentando renovar automaticamente via 'aws sso login'...")
+            try:
+                login_result = subprocess.run(["aws", "sso", "login", "--profile", settings.aws_profile], check=False)
+                if login_result.returncode == 0:
+                    logger.info("SSO renovado com sucesso!")
+                    return True
+                else:
+                    logger.error("Falha ao executar 'aws sso login'. Aguardando 30 segundos...")
+            except Exception as login_exc:
+                logger.error("Erro ao tentar invocar o comando de login do AWS: %s", login_exc)
+            
+            time.sleep(30)
+            return True
+        return False
+
+    while not stop_requested:
+        try:
+            deps = _build_processor_dependencies(settings, dry_run=args.dry_run)
+        except Exception as exc:
+            if _try_renew_sso(exc):
+                continue
+            if isinstance(exc, SpeciesRegistrationError):
+                logger.error(str(exc))
+                return 1
+            raise exc
+
+        try:
+            while not stop_requested:
+                _process_notifications(deps, settings.notification_processing_enabled)
+                examined = run_cycle(deps, settings.max_images_per_cycle)
+                logger.info("Ciclo concluído: %d foto(s) examinada(s)", examined)
+                _process_notifications(deps, settings.notification_processing_enabled)
+                if args.once:
+                    stop_requested = True
                     break
-                time.sleep(1)
-    finally:
-        deps.api_client.close()
-        deps.state_store.close()
+                for _ in range(settings.poll_interval_seconds):
+                    if stop_requested:
+                        break
+                    time.sleep(1)
+        except Exception as cycle_exc:
+            if _try_renew_sso(cycle_exc):
+                logger.info("Fechando recursos e reiniciando loop com novo token...")
+                deps.api_client.close()
+                deps.state_store.close()
+                continue
+            raise cycle_exc
+        finally:
+            deps.api_client.close()
+            deps.state_store.close()
 
     return 0
 
